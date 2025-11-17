@@ -1,0 +1,6 @@
+data/
+mid/
+output/
+*.log
+*.err
+*.out

@@ -1,0 +1,27 @@
+name: ud_search
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+channel_priority: flexible
+
+dependencies:
+  # --- Core runtime (pick a well-supported Python) ---
+  - python=3.11
+  - pip
+
+  # --- CLI tools / bio libs ---
+  - blast
+  - biopython>=1.81
+  - prokka #
+
+  # --- Data + plotting (no Qt) ---
+  - numpy
+  - pandas=2.2.*
+  - matplotlib-base=3.9.*     # <- use *-base to avoid Qt/PySide6/Qt6
+  - seaborn=0.13.*
+
+  # --- Install these via pip to avoid conda’s solver tangles ---
+  - pip:
+      - cblaster
+      - clinker-py
