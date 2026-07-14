@@ -70,7 +70,7 @@ END_AT_GENE=$(parse_yaml end_at_gene 2>/dev/null || true)
 STOP_BEFORE_GENE=$(parse_yaml stop_before_gene 2>/dev/null || true)
 MASTER_COLOR_MAP=$(parse_yaml master_color_map 2>/dev/null || true)
 
-CODE_DIR="${BASE_DIR}/code"
+CODE_DIR="$(cd "${SCRIPT_DIR}/../code" && pwd)"
 
 # --- Activate conda ---
 set +u
