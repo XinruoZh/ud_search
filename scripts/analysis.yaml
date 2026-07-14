@@ -1,0 +1,52 @@
+# ============================================================
+# Analysis configuration — run after run_annotate_contigs.sh
+# Usage: bash scripts/run_analysis.sh scripts/analysis.yaml
+# ============================================================
+
+# --- Paths ---
+# base_dir: output directory for ONE genome set from run_annotate_contigs.sh
+# e.g. /mnt/extra_space/output/S_oralis_Rgg144
+base_dir: /path/to/output/{GENOME_NAME}_{TARGET_GENE}
+
+# Prokka annotation dir (relative to base_dir)
+annotation_dir: annotation
+
+# EggNOG outputs from run_annotate_contigs.sh (relative to base_dir)
+eggnog_annotations: eggnog/{GENOME_NAME}_Rgg144.emapper.annotations
+protein_origins:    eggnog/protein_origins.tsv
+
+# Query FASTA with BLAST hit coordinates
+# (same target_fasta used in annotate_contigs.yaml for this genome set)
+query_fasta: /path/to/target_fasta.fasta
+
+# Intermediate and output dirs (relative to base_dir)
+annotation_with_eggnog_dir: annotation_with_eggnog
+output_dir:                 output
+log_dir:                    log
+
+# --- Neighbor extraction ---
+# direction: upstream | downstream | both
+window:    20000
+direction: downstream
+
+# --- Clustering ---
+max_rank:       10
+cdhit_identity: 0.80
+cdhit_threads:  4
+cluster_prefix: Drgg
+
+# --- Gene chain analysis ---
+chain_max_rank: 10
+
+# --- Conda environment ---
+conda_env: ud_search
+
+# --- Optional: protein name CSV (relative to base_dir) ---
+# balst_protein_name: manual_annotation_data/blasted_name.csv
+
+# --- Optional: end-at / stop-before genes for chain plot ---
+# end_at_gene:
+# stop_before_gene:
+
+# --- Optional: master color map (relative to base_dir) ---
+# master_color_map: shared/master_color.json

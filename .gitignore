@@ -1,0 +1,13 @@
+# 1. Ignore everything in the entire repository
+*
+
+# 2. Allow Git to look inside all directories
+!*/
+
+# 3. Explicitly allow the files you want to track
+!.gitignore
+!README.md
+
+# This matches EVERYTHING inside it
+!code/**
+!scripts/**

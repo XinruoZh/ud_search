@@ -1,0 +1,55 @@
+# ============================================================
+# USER SETTINGS — edit these for each run
+# ============================================================
+
+# Name of the target gene. Used in:
+#   - output subdirectory name: {genome_name}_{target_gene}/
+#   - FASTA header prefix:      >{target_gene}_vs_{sample}|...
+target_gene: Rgg144
+
+# Root output directory. Each genome set gets a subdirectory here.
+output_dir: /home/xinruoz/Document/Hiller/ud_search/Rgg144
+
+# Number of CDS to extract on EACH SIDE of the target gene per strain.
+# Total neighborhood per strain = up to 2 * max_genes.
+max_genes: 20
+max_bp: 
+
+# List of genome sets to process.
+# genome_name : human-readable label; becomes part of the output subdir name
+# genome_dir  : directory containing *.fasta genome files (one file per strain)
+# target_fasta: FASTA with hit coordinates for this gene in this genome set
+#               Header format: >{target_gene}_vs_{sample}|contig=X|...|SubjectStart=N|SubjectEnd=M|...
+genome_sets:
+  - genome_name: S_oralis
+    genome_dir:  /mnt/e/OralisSetX
+    target_fasta: /home/xinruoz/Document/Hiller/allele_search/results/so_rgg144/standard_dna_seq/Rgg144.fasta
+
+  - genome_name: S_mitis
+    genome_dir:  /mnt/e/MitisCollectionPubMLST_Fasta
+    target_fasta: /home/xinruoz/Document/Hiller/allele_search/results/mitis_Rgg144/standard_dna_seq/Rgg144.fasta
+
+  - genome_name: S_pneumo
+    genome_dir:  /mnt/e/GoldenSet
+    target_fasta: /home/xinruoz/Document/Hiller/allele_search/Rgg144_sp/standard_dna_seq/Rgg144.fasta
+
+# ============================================================
+# STABLE SETTINGS — change only when tools or environment change
+# ============================================================
+
+# HMM file passed to Prokka --hmms (must be hmmpress-indexed)
+hmm_file: /mnt/extra_space/database/hmm/eggNOG_strep_combined.hmm
+
+# EggNOG-mapper database directory (emapperdb-5.0.2 or newer)
+eggnog_db: /mnt/extra_space/database/eggnog_data/emapperdb-5.0.2
+
+# Conda environment containing prokka, emapper.py, parallel
+conda_env: ud_search
+
+# Prokka: CPUs per job and number of parallel jobs
+# Total cores used = prokka_cpus * prokka_parallel_jobs
+prokka_cpus:          4
+prokka_parallel_jobs: 5
+
+# EggNOG-mapper: CPUs for the single pooled run
+eggnog_cpus: 4
