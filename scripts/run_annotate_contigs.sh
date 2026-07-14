@@ -112,6 +112,63 @@ fi
 # Per-strain functions (exported for GNU parallel)
 # ============================================================
 
+extract_corresponding_contig() {
+    local genome_fasta=$1
+    local target_fasta=$2
+    local contigs_dir=$3
+    local log=$4
+
+    local name
+    name=$(basename "$genome_fasta" .fasta)
+    local out_fasta="$contigs_dir/$name.fasta"
+
+    if [[ -f "$out_fasta" ]]; then
+        echo "[SKIP] ExtractContig: $name" | tee -a "$log"
+        return 0
+    fi
+
+    python3 - "$target_fasta" "$genome_fasta" "$name" "$out_fasta" <<'PYEOF'
+import sys, re
+
+target_fasta, genome_fasta, sample_name, out_fasta = sys.argv[1:]
+pattern = re.compile(r'_vs_([^|]+)\|contig=([^|]+)\|')
+contig_id = None
+with open(target_fasta) as f:
+    for line in f:
+        if not line.startswith('>'):
+            continue
+        m = pattern.search(line)
+        if m and m.group(1).strip() == sample_name:
+            contig_id = m.group(2).strip()
+            break
+
+if contig_id is None:
+    print(f"[WARN] ExtractContig: no target hit for {sample_name}", file=sys.stderr)
+    sys.exit(0)
+
+found = False
+writing = False
+with open(genome_fasta) as fin, open(out_fasta, 'w') as fout:
+    for line in fin:
+        if line.startswith('>'):
+            writing = (line[1:].split()[0].strip() == contig_id)
+            if writing:
+                found = True
+        if writing:
+            fout.write(line)
+
+if not found:
+    print(f"[WARN] ExtractContig: contig {contig_id} not found in genome for {sample_name}", file=sys.stderr)
+    sys.exit(1)
+PYEOF
+
+    if [[ -s "$out_fasta" ]]; then
+        echo "[DONE]  ExtractContig: $name" | tee -a "$log"
+    else
+        echo "[WARN]  ExtractContig: $name — empty output" | tee -a "$log"
+    fi
+}
+
 run_prokka() {
     local fasta_file=$1
     local anno_dir=$2
@@ -184,7 +241,7 @@ run_extract_neighborhood() {
     fi
 }
 
-export -f run_prokka run_extract_neighborhood
+export -f extract_corresponding_contig run_prokka run_extract_neighborhood
 
 # ============================================================
 # Main loop over genome sets
@@ -202,12 +259,13 @@ echo "============================================"
 while IFS=$'\t' read -r GENOME_NAME GENOME_DIR TARGET_FASTA; do
 
     SET_DIR="${OUTPUT_DIR}/${GENOME_NAME}_${TARGET_GENE}"
+    CONTIGS_DIR="${SET_DIR}/corresponding_contigs"
     ANNO_DIR="${SET_DIR}/annotation"
     SUBSET_DIR="${SET_DIR}/eggnog_subset_faa"
     EGGNOG_DIR="${SET_DIR}/eggnog"
     LOG_DIR="${SET_DIR}/log"
 
-    mkdir -p "$ANNO_DIR" "$SUBSET_DIR" "$EGGNOG_DIR" "$LOG_DIR"
+    mkdir -p "$CONTIGS_DIR" "$ANNO_DIR" "$SUBSET_DIR" "$EGGNOG_DIR" "$LOG_DIR"
     LOG="${LOG_DIR}/${timestamp}_annotate_contigs.log"
 
     n_genomes=$(find "$GENOME_DIR" -maxdepth 1 -name "*.fasta" | wc -l)
@@ -221,23 +279,36 @@ while IFS=$'\t' read -r GENOME_NAME GENOME_DIR TARGET_FASTA; do
     echo "============================================" | tee -a "$LOG"
 
     # ----------------------------------------------------------
-    # Step 1: Prokka (parallel)
+    # Step 1: Extract corresponding contigs (parallel)
     # ----------------------------------------------------------
     echo "" | tee -a "$LOG"
-    echo "--- Step 1/4: Prokka (parallel -j ${PROKKA_JOBS}, ${PROKKA_JOBS}x${PROKKA_CPUS} cores) ---" | tee -a "$LOG"
+    echo "--- Step 1/5: Extract corresponding contigs (parallel -j ${PROKKA_JOBS}) ---" | tee -a "$LOG"
 
     find "$GENOME_DIR" -maxdepth 1 -name "*.fasta" | \
+        parallel -j "$PROKKA_JOBS" --line-buffer \
+        extract_corresponding_contig {} "$TARGET_FASTA" "$CONTIGS_DIR" "$LOG" || true
+
+    n_contigs=$(find "$CONTIGS_DIR" -name "*.fasta" | wc -l)
+    echo "Step 1 complete: $n_contigs / $n_genomes contigs extracted" | tee -a "$LOG"
+
+    # ----------------------------------------------------------
+    # Step 2: Prokka on corresponding contigs (parallel)
+    # ----------------------------------------------------------
+    echo "" | tee -a "$LOG"
+    echo "--- Step 2/5: Prokka (parallel -j ${PROKKA_JOBS}, ${PROKKA_JOBS}x${PROKKA_CPUS} cores) ---" | tee -a "$LOG"
+
+    find "$CONTIGS_DIR" -maxdepth 1 -name "*.fasta" | \
         parallel -j "$PROKKA_JOBS" --line-buffer \
         run_prokka {} "$ANNO_DIR" "$HMM_FILE" "$PROKKA_CPUS" "$LOG" || true
 
     n_prokka=$(find "$ANNO_DIR" -name "*.gff" | wc -l)
-    echo "Step 1 complete: $n_prokka / $n_genomes annotated with Prokka" | tee -a "$LOG"
+    echo "Step 2 complete: $n_prokka / $n_contigs contigs annotated with Prokka" | tee -a "$LOG"
 
     # ----------------------------------------------------------
-    # Step 2: Extract neighborhood FAA (parallel)
+    # Step 3: Extract neighborhood FAA (parallel)
     # ----------------------------------------------------------
     echo "" | tee -a "$LOG"
-    echo "--- Step 2/4: Extract neighborhood FAA (parallel -j ${PROKKA_JOBS}) ---" | tee -a "$LOG"
+    echo "--- Step 3/5: Extract neighborhood FAA (parallel -j ${PROKKA_JOBS}) ---" | tee -a "$LOG"
 
     find "$ANNO_DIR" -maxdepth 1 -mindepth 1 -type d -exec basename {} \; | \
         parallel -j "$PROKKA_JOBS" --line-buffer \
@@ -245,13 +316,13 @@ while IFS=$'\t' read -r GENOME_NAME GENOME_DIR TARGET_FASTA; do
         "$TARGET_FASTA" "$TARGET_GENE" "$EXTRACT_SCRIPT" "$MAX_GENES" "$LOG" || true
 
     n_subset=$(find "$SUBSET_DIR" -name "*_neighborhood.faa" | wc -l)
-    echo "Step 2 complete: $n_subset neighborhood FAA files written" | tee -a "$LOG"
+    echo "Step 3 complete: $n_subset neighborhood FAA files written" | tee -a "$LOG"
 
     # ----------------------------------------------------------
-    # Step 3: Pool + deduplicate proteins
+    # Step 4: Pool + deduplicate proteins
     # ----------------------------------------------------------
     echo "" | tee -a "$LOG"
-    echo "--- Step 3/4: Pool + deduplicate proteins ---" | tee -a "$LOG"
+    echo "--- Step 4/5: Pool + deduplicate proteins ---" | tee -a "$LOG"
 
     UNIQUE_FAA="${EGGNOG_DIR}/unique_proteins.faa"
     ORIGINS_TSV="${EGGNOG_DIR}/protein_origins.tsv"
@@ -269,13 +340,13 @@ while IFS=$'\t' read -r GENOME_NAME GENOME_DIR TARGET_FASTA; do
 
     n_unique=$(grep -c '^>' "$UNIQUE_FAA" 2>/dev/null || echo 0)
     n_origins=$(( $(wc -l < "$ORIGINS_TSV") - 1 ))
-    echo "Step 3 complete: $n_unique unique proteins, $n_origins origin rows" | tee -a "$LOG"
+    echo "Step 4 complete: $n_unique unique proteins, $n_origins origin rows" | tee -a "$LOG"
 
     # ----------------------------------------------------------
-    # Step 4: EggNOG-mapper on unique proteins (single run)
+    # Step 5: EggNOG-mapper on unique proteins (single run)
     # ----------------------------------------------------------
     echo "" | tee -a "$LOG"
-    echo "--- Step 4/4: EggNOG-mapper on $n_unique unique proteins ---" | tee -a "$LOG"
+    echo "--- Step 5/5: EggNOG-mapper on $n_unique unique proteins ---" | tee -a "$LOG"
 
     EMAPPER_PREFIX="${GENOME_NAME}_${TARGET_GENE}"
     EMAPPER_ANNOTATIONS="${EGGNOG_DIR}/${EMAPPER_PREFIX}.emapper.annotations"
@@ -309,6 +380,7 @@ while IFS=$'\t' read -r GENOME_NAME GENOME_DIR TARGET_FASTA; do
     echo "============================================" | tee -a "$LOG"
     echo "Genome set $GENOME_NAME complete: $(date)" | tee -a "$LOG"
     echo "Key outputs:" | tee -a "$LOG"
+    echo "  Corresp. contigs: $CONTIGS_DIR/" | tee -a "$LOG"
     echo "  Prokka GFFs:      $ANNO_DIR/" | tee -a "$LOG"
     echo "  Neighborhood FAA: $SUBSET_DIR/" | tee -a "$LOG"
     echo "  Unique proteins:  $UNIQUE_FAA" | tee -a "$LOG"

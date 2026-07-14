@@ -52,4 +52,4 @@ prokka_cpus:          4
 prokka_parallel_jobs: 5
 
 # EggNOG-mapper: CPUs for the single pooled run
-eggnog_cpus: 4
+eggnog_cpus: 20
