@@ -17,7 +17,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-BASE_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+BASE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CONFIG="${1:-${SCRIPT_DIR}/annotate_contigs.yaml}"
 TEST_MODE=false
 TEST_N=10
