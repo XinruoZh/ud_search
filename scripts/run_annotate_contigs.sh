@@ -3,20 +3,27 @@
 # run_annotate_contigs.sh — General Prokka + EggNOG annotation
 #
 # For each genome set defined in the YAML:
-#   Step 1: Run Prokka on every genome (parallel)
-#   Step 2: Extract neighborhood FAA per strain (parallel)
-#   Step 3: Pool + deduplicate neighborhood proteins (Python)
-#   Step 4: Run EggNOG-mapper once on unique proteins
+#   Step 1: Extract contig containing the target gene (parallel)
+#   Step 2: Run Prokka on that contig only (parallel)
+#   Step 3: Extract neighborhood FAA per strain (parallel)
+#   Step 4: Pool + deduplicate neighborhood proteins (Python)
+#   Step 5: Run EggNOG-mapper once on unique proteins
 #
 # Usage:
-#   bash scripts/general_annotation_step/run_annotate_contigs.sh [config.yaml]
-#   Default config: scripts/general_annotation_step/annotate_contigs.yaml
+#   bash scripts/run_annotate_contigs.sh [config.yaml] [--test]
+#   Default config: scripts/annotate_contigs.yaml
+#   --test: process only 10 genomes per set; output to *_test/ dirs
 # ============================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BASE_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 CONFIG="${1:-${SCRIPT_DIR}/annotate_contigs.yaml}"
+TEST_MODE=false
+TEST_N=10
+for _arg in "${@:2}"; do
+    [[ "$_arg" == "--test" ]] && TEST_MODE=true
+done
 
 if [[ ! -f "$CONFIG" ]]; then
     echo "ERROR: Config file not found: $CONFIG"
@@ -254,11 +261,16 @@ echo "Target gene: $TARGET_GENE"
 echo "Output dir:  $OUTPUT_DIR"
 echo "Config:      $CONFIG"
 echo "Started:     $(date)"
+[[ "$TEST_MODE" == true ]] && echo "*** TEST MODE: max $TEST_N genomes per set ***"
 echo "============================================"
 
 while IFS=$'\t' read -r GENOME_NAME GENOME_DIR TARGET_FASTA; do
 
-    SET_DIR="${OUTPUT_DIR}/${GENOME_NAME}_${TARGET_GENE}"
+    if [[ "$TEST_MODE" == true ]]; then
+        SET_DIR="${OUTPUT_DIR}/${GENOME_NAME}_${TARGET_GENE}_test"
+    else
+        SET_DIR="${OUTPUT_DIR}/${GENOME_NAME}_${TARGET_GENE}"
+    fi
     CONTIGS_DIR="${SET_DIR}/corresponding_contigs"
     ANNO_DIR="${SET_DIR}/annotation"
     SUBSET_DIR="${SET_DIR}/eggnog_subset_faa"
@@ -272,7 +284,11 @@ while IFS=$'\t' read -r GENOME_NAME GENOME_DIR TARGET_FASTA; do
 
     echo "" | tee -a "$LOG"
     echo "============================================" | tee -a "$LOG"
-    echo "Genome set: $GENOME_NAME  ($n_genomes genomes)" | tee -a "$LOG"
+    if [[ "$TEST_MODE" == true ]]; then
+        echo "Genome set: $GENOME_NAME  (TEST: $TEST_N of $n_genomes genomes)" | tee -a "$LOG"
+    else
+        echo "Genome set: $GENOME_NAME  ($n_genomes genomes)" | tee -a "$LOG"
+    fi
     echo "Genome dir: $GENOME_DIR" | tee -a "$LOG"
     echo "Target FASTA: $TARGET_FASTA" | tee -a "$LOG"
     echo "Output: $SET_DIR" | tee -a "$LOG"
@@ -284,8 +300,11 @@ while IFS=$'\t' read -r GENOME_NAME GENOME_DIR TARGET_FASTA; do
     echo "" | tee -a "$LOG"
     echo "--- Step 1/5: Extract corresponding contigs (parallel -j ${PROKKA_JOBS}) ---" | tee -a "$LOG"
 
-    find "$GENOME_DIR" -maxdepth 1 -name "*.fasta" | \
-        parallel -j "$PROKKA_JOBS" --line-buffer \
+    if [[ "$TEST_MODE" == true ]]; then
+        find "$GENOME_DIR" -maxdepth 1 -name "*.fasta" | head -"$TEST_N"
+    else
+        find "$GENOME_DIR" -maxdepth 1 -name "*.fasta"
+    fi | parallel -j "$PROKKA_JOBS" --line-buffer \
         extract_corresponding_contig {} "$TARGET_FASTA" "$CONTIGS_DIR" "$LOG" || true
 
     n_contigs=$(find "$CONTIGS_DIR" -name "*.fasta" | wc -l)
