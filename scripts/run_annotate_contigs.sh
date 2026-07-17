@@ -158,7 +158,7 @@ writing = False
 with open(genome_fasta) as fin, open(out_fasta, 'w') as fout:
     for line in fin:
         if line.startswith('>'):
-            writing = (line[1:].split()[0].strip() == contig_id)
+            writing = (line[1:].split()[0].split('|')[0].strip() == contig_id)
             if writing:
                 found = True
         if writing:
