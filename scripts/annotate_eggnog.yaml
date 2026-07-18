@@ -1,0 +1,29 @@
+# ============================================================
+# USER SETTINGS — edit these for each run
+# ============================================================
+
+# Must match the target_gene used in annotate_prokka.yaml
+# (used to locate the output subdirectory: {genome_name}_{target_gene}/)
+target_gene: Rgg144
+
+# Root output directory — same as in annotate_prokka.yaml
+output_dir: /home/xinruoz/Document/Hiller/ud_search/Rgg144
+
+# Genome set names — must match those used in annotate_prokka.yaml
+genome_sets:
+  - genome_name: S_oralis
+  - genome_name: S_mitis
+  - genome_name: S_pneumo
+
+# ============================================================
+# STABLE SETTINGS — change only when tools or environment change
+# ============================================================
+
+# EggNOG-mapper database directory (emapperdb-5.0.2 or newer)
+eggnog_db: /mnt/extra_space/database/eggnog_data/emapperdb-5.0.2
+
+# Conda environment containing emapper.py
+conda_env: ud_search
+
+# EggNOG-mapper: CPUs for the single pooled run
+eggnog_cpus: 20

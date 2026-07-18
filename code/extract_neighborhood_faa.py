@@ -121,10 +121,8 @@ def main():
     # 1. Find target gene hit position for this sample
     hit = parse_rgg144_fasta(args.rgg144_fasta, args.sample_name, args.gene_name)
     if hit is None:
-        print(f'[WARN] {args.sample_name}: no {args.gene_name} hit found in {args.rgg144_fasta}. '
-              f'Writing full FAA as fallback.', file=sys.stderr)
-        with open(args.faa) as src, open(args.output, 'w') as dst:
-            dst.write(src.read())
+        print(f'[INFO] {args.sample_name}: no {args.gene_name} hit found — writing empty file.', file=sys.stderr)
+        open(args.output, 'w').close()
         return
 
     contig, rgg144_mid = hit
@@ -132,10 +130,8 @@ def main():
     # 2. Parse CDS features from GFF on the matching contig
     cds_list = parse_gff_cds(args.gff, contig)
     if not cds_list:
-        print(f'[WARN] {args.sample_name}: no CDS found on contig {contig} in {args.gff}. '
-              f'Writing full FAA as fallback.', file=sys.stderr)
-        with open(args.faa) as src, open(args.output, 'w') as dst:
-            dst.write(src.read())
+        print(f'[WARN] {args.sample_name}: no CDS found on contig {contig} — writing empty file.', file=sys.stderr)
+        open(args.output, 'w').close()
         return
 
     # 3. Split into upstream (left) and downstream (right) of Rgg144, take <=max_genes per side
