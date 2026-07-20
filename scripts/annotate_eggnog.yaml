@@ -10,10 +10,15 @@ target_gene: Rgg144
 output_dir: /home/xinruoz/Document/Hiller/ud_search/Rgg144
 
 # Genome set names — must match those used in annotate_prokka.yaml
+# prokka_dir: absolute path to the central Prokka species subfolder;
+#             used as --gff_base when pooling proteins
 genome_sets:
   - genome_name: S_oralis
+    prokka_dir: /mnt/extra_space/xinruoz/ud_search/annotation_prokka/oralis
   - genome_name: S_mitis
+    prokka_dir: /mnt/extra_space/xinruoz/ud_search/annotation_prokka/mitis
   - genome_name: S_pneumo
+    prokka_dir: /mnt/extra_space/xinruoz/ud_search/annotation_prokka/pneumo
 
 # ============================================================
 # STABLE SETTINGS — change only when tools or environment change

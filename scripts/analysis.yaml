@@ -8,8 +8,10 @@
 # e.g. /mnt/extra_space/output/S_oralis_Rgg144
 base_dir: /path/to/output/{GENOME_NAME}_{TARGET_GENE}
 
-# Prokka annotation dir (relative to base_dir)
-annotation_dir: annotation
+# Prokka annotation dir — can be an absolute path or relative to base_dir.
+# For centralized Prokka (shared across queries), use the absolute species subfolder:
+#   e.g. /mnt/extra_space/xinruoz/ud_search/annotation_prokka/mitis
+annotation_dir: /mnt/extra_space/xinruoz/ud_search/annotation_prokka/mitis
 
 # EggNOG outputs from run_annotate_contigs.sh (relative to base_dir)
 eggnog_annotations: eggnog/{GENOME_NAME}_Rgg144.emapper.annotations

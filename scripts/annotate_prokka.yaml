@@ -14,35 +14,34 @@ output_dir: /home/xinruoz/Document/Hiller/ud_search/Rgg144
 # Total neighborhood per strain = up to 2 * max_genes.
 max_genes: 20
 
+# Root directory of pre-existing central Prokka annotations.
+# Structure: {prokka_base_dir}/{prokka_species_name}/{strain}/{strain}.gff/.faa
+prokka_base_dir: /mnt/extra_space/xinruoz/ud_search/annotation_prokka
+
 # List of genome sets to process.
-# genome_name : human-readable label; becomes part of the output subdir name
-# genome_dir  : directory containing *.fasta genome files (one file per strain)
-# target_fasta: FASTA with hit coordinates for this gene in this genome set
-#               Header format: >{target_gene}_vs_{sample}|contig=X|...|SubjectStart=N|SubjectEnd=M|...
+# genome_name         : human-readable label; becomes part of the output subdir name
+# prokka_species_name : subfolder name inside prokka_base_dir for this species
+# target_fasta        : FASTA with hit coordinates for this gene in this genome set
+#                       Header format: >{target_gene}_vs_{sample}|contig=X|...|SubjectStart=N|SubjectEnd=M|...
 genome_sets:
   - genome_name: S_oralis
-    genome_dir:  /mnt/e/OralisSetX
+    prokka_species_name: oralis
     target_fasta: /home/xinruoz/Document/Hiller/allele_search/results/so_rgg144/standard_dna_seq/Rgg144.fasta
 
   - genome_name: S_mitis
-    genome_dir:  /mnt/e/MitisCollectionPubMLST_Fasta
+    prokka_species_name: mitis
     target_fasta: /home/xinruoz/Document/Hiller/allele_search/results/mitis_Rgg144/standard_dna_seq/Rgg144.fasta
 
   - genome_name: S_pneumo
-    genome_dir:  /mnt/e/GoldenSet
+    prokka_species_name: pneumo
     target_fasta: /home/xinruoz/Document/Hiller/allele_search/Rgg144_sp/standard_dna_seq/Rgg144.fasta
 
 # ============================================================
 # STABLE SETTINGS — change only when tools or environment change
 # ============================================================
 
-# HMM file passed to Prokka --hmms (must be hmmpress-indexed)
-hmm_file: /mnt/extra_space/database/hmm/eggNOG_strep_combined.hmm
-
-# Conda environment containing prokka, parallel
+# Conda environment containing parallel
 conda_env: ud_search
 
-# Prokka: CPUs per job and number of parallel jobs
-# Total cores used = prokka_cpus * prokka_parallel_jobs
-prokka_cpus:          4
-prokka_parallel_jobs: 5
+# Number of parallel jobs for neighborhood FAA extraction
+parallel_jobs: 5

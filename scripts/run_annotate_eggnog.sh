@@ -53,8 +53,8 @@ except ImportError:
 PYEOF
 }
 
-parse_genome_names() {
-    # Emits one genome_name per line
+parse_genome_sets() {
+    # Emits one tab-separated line per genome set: genome_name\tprokka_dir
     python3 - "$CONFIG" <<'PYEOF'
 import sys
 try:
@@ -67,9 +67,10 @@ with open(sys.argv[1]) as f:
     cfg = yaml.safe_load(f)
 
 for entry in cfg.get('genome_sets', []):
-    name = str(entry.get('genome_name', '')).strip()
+    name      = str(entry.get('genome_name', '')).strip()
+    prokka_dir = str(entry.get('prokka_dir', '')).strip()
     if name:
-        print(name)
+        print(f"{name}\t{prokka_dir}")
 PYEOF
 }
 
@@ -105,10 +106,10 @@ echo "Config:      $CONFIG"
 echo "Started:     $(date)"
 echo "============================================"
 
-while IFS= read -r GENOME_NAME; do
+while IFS=$'\t' read -r GENOME_NAME PROKKA_DIR; do
 
     SET_DIR="${OUTPUT_DIR}/${GENOME_NAME}_${TARGET_GENE}"
-    ANNO_DIR="${SET_DIR}/annotation"
+    ANNO_DIR="$PROKKA_DIR"
     SUBSET_DIR="${SET_DIR}/eggnog_subset_faa"
     EGGNOG_DIR="${SET_DIR}/eggnog"
     LOG_DIR="${SET_DIR}/log"
@@ -196,7 +197,7 @@ while IFS= read -r GENOME_NAME; do
     echo "  Log:              $LOG" | tee -a "$LOG"
     echo "============================================" | tee -a "$LOG"
 
-done < <(parse_genome_names)
+done < <(parse_genome_sets)
 
 echo ""
 echo "============================================"

@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # ============================================================
-# run_annotate_prokka.sh — Prokka annotation + neighborhood FAA extraction
+# run_annotate_prokka.sh — Neighborhood FAA extraction using central Prokka annotations
 #
-# For each genome set defined in the YAML:
-#   Step 1: Run Prokka on each genome in genome_dir (parallel)
-#   Step 2: Extract neighborhood FAA per strain (parallel)
+# Prokka is run ONCE per genome and stored centrally.
+# This script reads from prokka_base_dir/{prokka_species_name}/{strain}/
+# and extracts neighborhood FAA per strain for each target gene query.
 #
 # Run run_annotate_eggnog.sh afterwards to pool proteins and run EggNOG-mapper.
 #
 # Usage:
 #   bash scripts/run_annotate_prokka.sh [config.yaml] [--test]
 #   Default config: scripts/annotate_prokka.yaml
-#   --test: process only 10 genomes per set; output to *_test/ dirs
+#   --test: process only 10 strains per set; output to *_test/ dirs
 # ============================================================
 set -euo pipefail
 
@@ -61,7 +61,8 @@ PYEOF
 }
 
 parse_genome_sets() {
-    # Emits one tab-separated line per genome set: genome_name\tgenome_dir\ttarget_fasta
+    # Emits one tab-separated line per genome set:
+    # genome_name\tprokka_species_name\ttarget_fasta
     python3 - "$CONFIG" <<'PYEOF'
 import sys
 try:
@@ -74,11 +75,11 @@ with open(sys.argv[1]) as f:
     cfg = yaml.safe_load(f)
 
 for entry in cfg.get('genome_sets', []):
-    name   = str(entry.get('genome_name', '')).strip()
-    gdir   = str(entry.get('genome_dir', '')).strip()
-    tfasta = str(entry.get('target_fasta', '')).strip()
-    if name and gdir and tfasta:
-        print(f"{name}\t{gdir}\t{tfasta}")
+    name    = str(entry.get('genome_name', '')).strip()
+    species = str(entry.get('prokka_species_name', '')).strip()
+    tfasta  = str(entry.get('target_fasta', '')).strip()
+    if name and species and tfasta:
+        print(f"{name}\t{species}\t{tfasta}")
 PYEOF
 }
 
@@ -88,10 +89,9 @@ PYEOF
 TARGET_GENE=$(parse_yaml_scalar target_gene)
 OUTPUT_DIR=$(parse_yaml_scalar output_dir)
 MAX_GENES=$(parse_yaml_scalar max_genes)
-HMM_FILE=$(parse_yaml_scalar hmm_file)
+PROKKA_BASE_DIR=$(parse_yaml_scalar prokka_base_dir)
 CONDA_ENV=$(parse_yaml_scalar conda_env)
-PROKKA_CPUS=$(parse_yaml_scalar prokka_cpus)
-PROKKA_JOBS=$(parse_yaml_scalar prokka_parallel_jobs)
+PARALLEL_JOBS=$(parse_yaml_scalar parallel_jobs)
 
 EXTRACT_SCRIPT="${BASE_DIR}/code/extract_neighborhood_faa.py"
 
@@ -104,45 +104,8 @@ conda activate "$CONDA_ENV"
 set -u
 
 # ============================================================
-# HMM index check
+# Per-strain function (exported for GNU parallel)
 # ============================================================
-if [[ ! -f "${HMM_FILE}.h3i" ]]; then
-    echo "[INFO] HMM not indexed — running hmmpress on $HMM_FILE"
-    hmmpress "$HMM_FILE"
-fi
-
-# ============================================================
-# Per-strain functions (exported for GNU parallel)
-# ============================================================
-
-run_prokka() {
-    local fasta_file=$1
-    local anno_dir=$2
-    local hmm=$3
-    local cpus=$4
-    local log=$5
-
-    local name
-    name=$(basename "$fasta_file" .fasta)
-    local out_dir="$anno_dir/$name"
-
-    if [[ -f "$out_dir/$name.gff" ]]; then
-        echo "[SKIP] Prokka: $name" | tee -a "$log"
-        return 0
-    fi
-
-    echo "[START] Prokka: $name" | tee -a "$log"
-    prokka --cpus "$cpus" --outdir "$out_dir" --prefix "$name" \
-           --hmms "$hmm" --quiet --force "$fasta_file" \
-           >> "$log" 2>&1
-
-    if [[ $? -eq 0 ]]; then
-        echo "[DONE]  Prokka: $name" | tee -a "$log"
-    else
-        echo "[FAIL]  Prokka: $name — check $log" | tee -a "$log"
-        return 1
-    fi
-}
 
 run_extract_neighborhood() {
     local name=$1
@@ -187,7 +150,7 @@ run_extract_neighborhood() {
     fi
 }
 
-export -f run_prokka run_extract_neighborhood
+export -f run_extract_neighborhood
 
 # ============================================================
 # Main loop over genome sets
@@ -195,77 +158,70 @@ export -f run_prokka run_extract_neighborhood
 timestamp=$(date +"%Y-%m-%d_%H-%M-%S")
 
 echo "============================================"
-echo "Prokka annotation pipeline"
-echo "Target gene: $TARGET_GENE"
-echo "Output dir:  $OUTPUT_DIR"
-echo "Config:      $CONFIG"
-echo "Started:     $(date)"
-[[ "$TEST_MODE" == true ]] && echo "*** TEST MODE: max $TEST_N genomes per set ***"
+echo "Neighborhood FAA extraction pipeline"
+echo "Target gene:     $TARGET_GENE"
+echo "Output dir:      $OUTPUT_DIR"
+echo "Prokka base dir: $PROKKA_BASE_DIR"
+echo "Config:          $CONFIG"
+echo "Started:         $(date)"
+[[ "$TEST_MODE" == true ]] && echo "*** TEST MODE: max $TEST_N strains per set ***"
 echo "============================================"
 
-while IFS=$'\t' read -r GENOME_NAME GENOME_DIR TARGET_FASTA; do
+while IFS=$'\t' read -r GENOME_NAME PROKKA_SPECIES TARGET_FASTA; do
+
+    ANNO_DIR="${PROKKA_BASE_DIR}/${PROKKA_SPECIES}"
+
+    if [[ ! -d "$ANNO_DIR" ]]; then
+        echo "[ERROR] Central Prokka dir not found: $ANNO_DIR" >&2
+        continue
+    fi
 
     if [[ "$TEST_MODE" == true ]]; then
         SET_DIR="${OUTPUT_DIR}/${GENOME_NAME}_${TARGET_GENE}_test"
     else
         SET_DIR="${OUTPUT_DIR}/${GENOME_NAME}_${TARGET_GENE}"
     fi
-    ANNO_DIR="${SET_DIR}/annotation"
     SUBSET_DIR="${SET_DIR}/eggnog_subset_faa"
     LOG_DIR="${SET_DIR}/log"
 
-    mkdir -p "$ANNO_DIR" "$SUBSET_DIR" "$LOG_DIR"
+    mkdir -p "$SUBSET_DIR" "$LOG_DIR"
     LOG="${LOG_DIR}/${timestamp}_annotate_prokka.log"
 
-    n_genomes=$(find "$GENOME_DIR" -maxdepth 1 -name "*.fasta" | wc -l)
+    n_strains=$(find "$ANNO_DIR" -maxdepth 1 -mindepth 1 -type d | wc -l)
 
     echo "" | tee -a "$LOG"
     echo "============================================" | tee -a "$LOG"
     if [[ "$TEST_MODE" == true ]]; then
-        echo "Genome set: $GENOME_NAME  (TEST: $TEST_N of $n_genomes genomes)" | tee -a "$LOG"
+        echo "Genome set: $GENOME_NAME  (TEST: $TEST_N of $n_strains strains)" | tee -a "$LOG"
     else
-        echo "Genome set: $GENOME_NAME  ($n_genomes genomes)" | tee -a "$LOG"
+        echo "Genome set: $GENOME_NAME  ($n_strains strains)" | tee -a "$LOG"
     fi
-    echo "Genome dir: $GENOME_DIR" | tee -a "$LOG"
+    echo "Prokka dir:   $ANNO_DIR" | tee -a "$LOG"
     echo "Target FASTA: $TARGET_FASTA" | tee -a "$LOG"
-    echo "Output: $SET_DIR" | tee -a "$LOG"
+    echo "Output:       $SET_DIR" | tee -a "$LOG"
     echo "============================================" | tee -a "$LOG"
 
     # ----------------------------------------------------------
-    # Step 1: Prokka on all genomes in genome_dir (parallel)
+    # Extract neighborhood FAA (parallel)
     # ----------------------------------------------------------
     echo "" | tee -a "$LOG"
-    echo "--- Step 1/2: Prokka (parallel -j ${PROKKA_JOBS}, ${PROKKA_JOBS}x${PROKKA_CPUS} cores) ---" | tee -a "$LOG"
+    echo "--- Extract neighborhood FAA (parallel -j ${PARALLEL_JOBS}) ---" | tee -a "$LOG"
 
     if [[ "$TEST_MODE" == true ]]; then
-        find "$GENOME_DIR" -maxdepth 1 -name "*.fasta" | head -"$TEST_N"
+        find "$ANNO_DIR" -maxdepth 1 -mindepth 1 -type d -exec basename {} \; | head -"$TEST_N"
     else
-        find "$GENOME_DIR" -maxdepth 1 -name "*.fasta"
-    fi | parallel -j "$PROKKA_JOBS" --line-buffer \
-        run_prokka {} "$ANNO_DIR" "$HMM_FILE" "$PROKKA_CPUS" "$LOG" || true
-
-    n_prokka=$(find "$ANNO_DIR" -name "*.gff" | wc -l)
-    echo "Step 1 complete: $n_prokka / $n_genomes genomes annotated with Prokka" | tee -a "$LOG"
-
-    # ----------------------------------------------------------
-    # Step 2: Extract neighborhood FAA (parallel)
-    # ----------------------------------------------------------
-    echo "" | tee -a "$LOG"
-    echo "--- Step 2/2: Extract neighborhood FAA (parallel -j ${PROKKA_JOBS}) ---" | tee -a "$LOG"
-
-    find "$ANNO_DIR" -maxdepth 1 -mindepth 1 -type d -exec basename {} \; | \
-        parallel -j "$PROKKA_JOBS" --line-buffer \
+        find "$ANNO_DIR" -maxdepth 1 -mindepth 1 -type d -exec basename {} \;
+    fi | parallel -j "$PARALLEL_JOBS" --line-buffer \
         run_extract_neighborhood {} "$ANNO_DIR" "$SUBSET_DIR" \
         "$TARGET_FASTA" "$TARGET_GENE" "$EXTRACT_SCRIPT" "$MAX_GENES" "$LOG" || true
 
     n_subset=$(find "$SUBSET_DIR" -name "*_neighborhood.faa" | wc -l)
-    echo "Step 2 complete: $n_subset neighborhood FAA files written" | tee -a "$LOG"
+    echo "Complete: $n_subset neighborhood FAA files written" | tee -a "$LOG"
 
     echo "" | tee -a "$LOG"
     echo "============================================" | tee -a "$LOG"
     echo "Genome set $GENOME_NAME complete: $(date)" | tee -a "$LOG"
     echo "Key outputs:" | tee -a "$LOG"
-    echo "  Prokka GFFs:      $ANNO_DIR/" | tee -a "$LOG"
     echo "  Neighborhood FAA: $SUBSET_DIR/" | tee -a "$LOG"
     echo "  Log:              $LOG" | tee -a "$LOG"
     echo "Next: run run_annotate_eggnog.sh to pool proteins and run EggNOG-mapper." | tee -a "$LOG"

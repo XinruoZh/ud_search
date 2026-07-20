@@ -50,7 +50,12 @@ PYEOF
 
 # Load all parameters
 BASE_DIR=$(parse_yaml base_dir)
-ANNO_DIR="${BASE_DIR}/$(parse_yaml annotation_dir)"
+_anno_dir=$(parse_yaml annotation_dir)
+if [[ "$_anno_dir" == /* ]]; then
+    ANNO_DIR="$_anno_dir"
+else
+    ANNO_DIR="${BASE_DIR}/${_anno_dir}"
+fi
 EGGNOG_ANNOTATIONS="${BASE_DIR}/$(parse_yaml eggnog_annotations)"
 PROTEIN_ORIGINS="${BASE_DIR}/$(parse_yaml protein_origins)"
 QUERY_FASTA="$(parse_yaml query_fasta)"

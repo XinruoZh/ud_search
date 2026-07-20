@@ -34,20 +34,21 @@ mkdir -p "$CONFIG_DIR"
 # ============================================================
 ALLELE_SEARCH_RESULTS="/mnt/extra_space/xinruoz/allele_search/results"
 
-SM_GENOME_DIR="/mnt/extra_space/database/SMitis_Database_pubMLST_102225"
-SP_GENOME_DIR="/mnt/extra_space/database/GoldenSet_7548Genomes_2023"
-SO_GENOME_DIR="/mnt/extra_space/database/OralisSetX"
+# Central Prokka annotation directory (pre-existing, not re-run per query)
+# Structure: {PROKKA_BASE_DIR}/{species_folder}/{strain}/{strain}.gff/.faa
+PROKKA_BASE_DIR="/mnt/extra_space/xinruoz/ud_search/annotation_prokka"
+
+# Mapping: genome set name -> species subfolder in PROKKA_BASE_DIR
+declare -A SPECIES_FOLDER=([S_mitis]=mitis [S_pneumo]=pneumo [S_oralis]=oralis)
 
 OUTPUT_DIR="${BASE_DIR}/annotation_results"
 
 # ============================================================
 # Stable settings
 # ============================================================
-HMM_FILE="/mnt/extra_space/database/hmm/eggNOG_strep_combined.hmm"
 EGGNOG_DB="/mnt/extra_space/database/eggnog_data/emapperdb-5.0.2"
 CONDA_ENV="ud_search"
-PROKKA_CPUS=4
-PROKKA_JOBS=5
+PARALLEL_JOBS=5
 EGGNOG_CPUS=20
 MAX_GENES=20
 
@@ -81,20 +82,19 @@ for query in "${QUERIES[@]}"; do
 target_gene: ${query}
 output_dir: ${OUTPUT_DIR}
 max_genes: ${MAX_GENES}
+prokka_base_dir: ${PROKKA_BASE_DIR}
+conda_env: ${CONDA_ENV}
+parallel_jobs: ${PARALLEL_JOBS}
 genome_sets:
   - genome_name: S_mitis
-    genome_dir:  ${SM_GENOME_DIR}
+    prokka_species_name: ${SPECIES_FOLDER[S_mitis]}
     target_fasta: ${ALLELE_SEARCH_RESULTS}/${query}/sm_${query}/standard_dna_seq/${query}.fasta
   - genome_name: S_pneumo
-    genome_dir:  ${SP_GENOME_DIR}
+    prokka_species_name: ${SPECIES_FOLDER[S_pneumo]}
     target_fasta: ${ALLELE_SEARCH_RESULTS}/${query}/sp_${query}/standard_dna_seq/${query}.fasta
   - genome_name: S_oralis
-    genome_dir:  ${SO_GENOME_DIR}
+    prokka_species_name: ${SPECIES_FOLDER[S_oralis]}
     target_fasta: ${ALLELE_SEARCH_RESULTS}/${query}/so_${query}/standard_dna_seq/${query}.fasta
-hmm_file: ${HMM_FILE}
-conda_env: ${CONDA_ENV}
-prokka_cpus: ${PROKKA_CPUS}
-prokka_parallel_jobs: ${PROKKA_JOBS}
 YAML
 
     # ----------------------------------------------------------
@@ -105,8 +105,11 @@ target_gene: ${query}
 output_dir: ${OUTPUT_DIR}
 genome_sets:
   - genome_name: S_mitis
+    prokka_dir: ${PROKKA_BASE_DIR}/${SPECIES_FOLDER[S_mitis]}
   - genome_name: S_pneumo
+    prokka_dir: ${PROKKA_BASE_DIR}/${SPECIES_FOLDER[S_pneumo]}
   - genome_name: S_oralis
+    prokka_dir: ${PROKKA_BASE_DIR}/${SPECIES_FOLDER[S_oralis]}
 eggnog_db: ${EGGNOG_DB}
 conda_env: ${CONDA_ENV}
 eggnog_cpus: ${EGGNOG_CPUS}
