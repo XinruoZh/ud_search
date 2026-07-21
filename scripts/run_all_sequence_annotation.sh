@@ -34,9 +34,9 @@ mkdir -p "$CONFIG_DIR"
 # ============================================================
 ALLELE_SEARCH_RESULTS="/mnt/extra_space/xinruoz/allele_search/results"
 
-# Central Prokka annotation directory (pre-existing, not re-run per query)
+# Central Prokka annotation directory — created on first run, shared across all queries.
 # Structure: {PROKKA_BASE_DIR}/{species_folder}/{strain}/{strain}.gff/.faa
-PROKKA_BASE_DIR="/mnt/extra_space/xinruoz/ud_search/annotation_prokka"
+PROKKA_BASE_DIR="${BASE_DIR}/annotation_prokka"
 
 # Mapping: genome set name -> species subfolder in PROKKA_BASE_DIR
 declare -A SPECIES_FOLDER=([S_mitis]=mitis [S_pneumo]=pneumo [S_oralis]=oralis)

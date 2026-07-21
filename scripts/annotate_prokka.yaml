@@ -14,7 +14,7 @@ output_dir: /home/xinruoz/Document/Hiller/ud_search/Rgg144
 # Total neighborhood per strain = up to 2 * max_genes.
 max_genes: 20
 
-# Root directory of pre-existing central Prokka annotations.
+# Central Prokka annotation directory — created on first run, shared across all queries.
 # Structure: {prokka_base_dir}/{prokka_species_name}/{strain}/{strain}.gff/.faa
 prokka_base_dir: /mnt/extra_space/xinruoz/ud_search/annotation_prokka
 

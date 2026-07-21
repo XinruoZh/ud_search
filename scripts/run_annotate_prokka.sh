@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
 # ============================================================
-# run_annotate_prokka.sh — Neighborhood FAA extraction using central Prokka annotations
+# run_annotate_prokka.sh — Prokka annotation + neighborhood FAA extraction
 #
-# Prokka is run ONCE per genome and stored centrally.
-# This script reads from prokka_base_dir/{prokka_species_name}/{strain}/
-# and extracts neighborhood FAA per strain for each target gene query.
+# For each genome set defined in the config:
+#   Step 0: Run Prokka for every strain whose GFF is missing.
+#           Automatically handles contig names >37 chars by shortening
+#           them before Prokka and restoring original names in the GFF.
+#           Strains already annotated (GFF present) are skipped.
+#   Step 1: Extract neighborhood FAA (±max_genes CDS around the target
+#           gene hit) per strain, in parallel.
 #
-# If a strain directory exists but is missing a .gff (Prokka previously failed
-# due to contig names >37 chars), this script automatically re-runs Prokka
-# with shortened contig names and restores original names in the output GFF.
+# Prokka annotations are written to a shared central dir:
+#   prokka_base_dir/{prokka_species_name}/{strain}/{strain}.gff/.faa/...
+# This dir is created on first run and reused by all query genes.
 #
 # Run run_annotate_eggnog.sh afterwards to pool proteins and run EggNOG-mapper.
 #
@@ -110,12 +114,12 @@ conda activate "$CONDA_ENV"
 set -u
 
 # ============================================================
-# Python snippets for contig-name repair (exported as variables)
+# Python snippets for contig-name handling (exported as variables)
 # ============================================================
 
-# Reads genome FASTA, shortens any contig name >37 chars to rctg{N:05d},
-# writes temp FASTA and mapping file.
-# Exit 0 = some names were shortened; exit 2 = nothing to shorten.
+# Reads FASTA, shortens any contig name >37 chars to rctg{N:05d},
+# writes temp FASTA and a mapping file.
+# Exit 0 = names were shortened; exit 2 = all names were fine (nothing done).
 SHORTEN_PY='
 import sys
 
@@ -143,7 +147,7 @@ with open(fasta_in) as f:
             lines_out.append(line)
 
 if not mapping:
-    sys.exit(2)  # no long names found — Prokka failed for another reason
+    sys.exit(2)  # no long names — nothing to shorten
 
 with open(fasta_out, "w") as f:
     f.writelines(lines_out)
@@ -152,7 +156,8 @@ with open(map_out, "w") as f:
         f.write(f"{short}\t{orig}\n")
 '
 
-# Reads Prokka GFF with shortened contig names, restores original names.
+# Reads Prokka GFF with shortened contig names, restores original names
+# in annotation column 1 and in the ##FASTA section headers.
 RESTORE_PY='
 import sys
 
@@ -192,10 +197,11 @@ with open(gff_in) as fin, open(gff_out, "w") as fout:
 export SHORTEN_PY RESTORE_PY
 
 # ============================================================
-# Prokka repair function (exported for GNU parallel)
+# Prokka function — runs for any strain missing a GFF
+# Handles both fresh annotation and repair of long-contig-name failures.
 # ============================================================
 
-run_prokka_repair() {
+run_prokka_for_strain() {
     local name=$1
     local anno_dir=$2
     local genome_dir=$3
@@ -203,34 +209,43 @@ run_prokka_repair() {
     local prokka_cpus=$5
     local log=$6
 
+    local strain_dir="${anno_dir}/${name}"
+    local gff="${strain_dir}/${name}.gff"
+
+    # Already annotated — skip
+    if [[ -f "$gff" ]]; then
+        echo "[SKIP] Prokka: $name" | tee -a "$log"
+        return 0
+    fi
+
     local genome_fasta="${genome_dir}/${name}.fasta"
-    local tmpdir="/tmp/prokka_repair_${name}"
+    if [[ ! -f "$genome_fasta" ]]; then
+        echo "[WARN] Prokka: $name — genome FASTA not found in $genome_dir, skipping" | tee -a "$log"
+        return 0
+    fi
+
+    echo "[PROKKA] $name" | tee -a "$log"
+    mkdir -p "$strain_dir"
+
+    local tmpdir="/tmp/prokka_${name}"
     local tmp_fasta="${tmpdir}/input.fasta"
     local map_file="${tmpdir}/contig_map.tsv"
     local prokka_out="${tmpdir}/out"
-    local raw_gff="${prokka_out}/${name}.gff"
-    local fixed_gff="${tmpdir}/${name}_fixed.gff"
-    local strain_dir="${anno_dir}/${name}"
-
-    if [[ ! -f "$genome_fasta" ]]; then
-        echo "[WARN] Repair $name: genome FASTA not found at $genome_fasta — skipping" | tee -a "$log"
-        return 0
-    fi
-
-    echo "[REPAIR] $name: re-running Prokka with contig-name fix" | tee -a "$log"
     rm -rf "$tmpdir"
-    mkdir -p "$tmpdir" "$prokka_out"
+    mkdir -p "$prokka_out"
 
-    # Step 1: shorten contig names
+    # Try to shorten contig names (exit 2 = none are long)
     python3 -c "$SHORTEN_PY" "$genome_fasta" "$tmp_fasta" "$map_file"
-    local rc=$?
-    if [[ $rc -eq 2 ]]; then
-        echo "[WARN] Repair $name: no contig names >37 chars — Prokka failed for another reason, skipping" | tee -a "$log"
-        rm -rf "$tmpdir"
-        return 0
+    local need_restore=$?
+
+    local input_fasta
+    if [[ $need_restore -eq 2 ]]; then
+        input_fasta="$genome_fasta"   # all names fine — use original
+    else
+        input_fasta="$tmp_fasta"      # shortened names — use temp
     fi
 
-    # Step 2: run Prokka on shortened FASTA
+    # Run Prokka
     prokka \
         --cpus   "$prokka_cpus" \
         --outdir "$prokka_out" \
@@ -238,17 +253,24 @@ run_prokka_repair() {
         --hmms   "$hmm_file" \
         --quiet \
         --force \
-        "$tmp_fasta" \
+        "$input_fasta" \
         >> "$log" 2>&1 || {
-        echo "[ERROR] Repair $name: Prokka failed — tmpdir kept for debugging: $tmpdir" | tee -a "$log"
+        echo "[ERROR] Prokka: $name failed — tmpdir kept for debugging: $tmpdir" | tee -a "$log"
         return 1
     }
 
-    # Step 3: restore original contig names in GFF
-    python3 -c "$RESTORE_PY" "$raw_gff" "$fixed_gff" "$map_file"
+    # Restore original contig names in GFF if we shortened them
+    if [[ $need_restore -eq 0 ]]; then
+        python3 -c "$RESTORE_PY" \
+            "${prokka_out}/${name}.gff" \
+            "${tmpdir}/${name}_fixed.gff" \
+            "$map_file"
+        cp "${tmpdir}/${name}_fixed.gff" "${strain_dir}/${name}.gff"
+    else
+        cp "${prokka_out}/${name}.gff" "${strain_dir}/${name}.gff"
+    fi
 
-    # Step 4: copy outputs to central strain dir
-    cp "$fixed_gff" "${strain_dir}/${name}.gff"
+    # Copy remaining Prokka outputs to the central strain dir
     cp "${prokka_out}/${name}.faa" "${strain_dir}/${name}.faa"
     for ext in err ffn fna gbk log sqn tbl tsv txt; do
         [[ -f "${prokka_out}/${name}.${ext}" ]] && \
@@ -256,10 +278,10 @@ run_prokka_repair() {
     done
 
     rm -rf "$tmpdir"
-    echo "[REPAIRED] $name: GFF restored with original contig names" | tee -a "$log"
+    echo "[DONE] Prokka: $name" | tee -a "$log"
 }
 
-export -f run_prokka_repair
+export -f run_prokka_for_strain
 
 # ============================================================
 # Neighborhood extraction function (exported for GNU parallel)
@@ -316,7 +338,7 @@ export -f run_extract_neighborhood
 timestamp=$(date +"%Y-%m-%d_%H-%M-%S")
 
 echo "============================================"
-echo "Neighborhood FAA extraction pipeline"
+echo "Prokka annotation + neighborhood FAA extraction"
 echo "Target gene:     $TARGET_GENE"
 echo "Output dir:      $OUTPUT_DIR"
 echo "Prokka base dir: $PROKKA_BASE_DIR"
@@ -328,11 +350,7 @@ echo "============================================"
 while IFS=$'\t' read -r GENOME_NAME PROKKA_SPECIES TARGET_FASTA GENOME_DIR; do
 
     ANNO_DIR="${PROKKA_BASE_DIR}/${PROKKA_SPECIES}"
-
-    if [[ ! -d "$ANNO_DIR" ]]; then
-        echo "[ERROR] Central Prokka dir not found: $ANNO_DIR" >&2
-        continue
-    fi
+    mkdir -p "$ANNO_DIR"
 
     if [[ "$TEST_MODE" == true ]]; then
         SET_DIR="${OUTPUT_DIR}/${GENOME_NAME}_${TARGET_GENE}_test"
@@ -345,58 +363,40 @@ while IFS=$'\t' read -r GENOME_NAME PROKKA_SPECIES TARGET_FASTA GENOME_DIR; do
     mkdir -p "$SUBSET_DIR" "$LOG_DIR"
     LOG="${LOG_DIR}/${timestamp}_annotate_prokka.log"
 
-    n_strains=$(find "$ANNO_DIR" -maxdepth 1 -mindepth 1 -type d | wc -l)
+    n_genomes=$(find "$GENOME_DIR" -maxdepth 1 -name "*.fasta" | wc -l)
 
     echo "" | tee -a "$LOG"
     echo "============================================" | tee -a "$LOG"
     if [[ "$TEST_MODE" == true ]]; then
-        echo "Genome set: $GENOME_NAME  (TEST: $TEST_N of $n_strains strains)" | tee -a "$LOG"
+        echo "Genome set: $GENOME_NAME  (TEST: $TEST_N of $n_genomes genomes)" | tee -a "$LOG"
     else
-        echo "Genome set: $GENOME_NAME  ($n_strains strains)" | tee -a "$LOG"
+        echo "Genome set: $GENOME_NAME  ($n_genomes genomes)" | tee -a "$LOG"
     fi
+    echo "Genome dir:   $GENOME_DIR" | tee -a "$LOG"
     echo "Prokka dir:   $ANNO_DIR" | tee -a "$LOG"
     echo "Target FASTA: $TARGET_FASTA" | tee -a "$LOG"
     echo "Output:       $SET_DIR" | tee -a "$LOG"
     echo "============================================" | tee -a "$LOG"
 
     # ----------------------------------------------------------
-    # Step 0: Repair strains with missing GFF (long contig names)
+    # Step 0: Prokka annotation (parallel, skips already-done strains)
     # ----------------------------------------------------------
-    if [[ -n "$GENOME_DIR" && -d "$GENOME_DIR" ]]; then
+    echo "" | tee -a "$LOG"
+    echo "--- Step 0: Prokka annotation (parallel -j ${PARALLEL_JOBS}) ---" | tee -a "$LOG"
 
-        # Collect strains missing a GFF
-        MISSING_GFF=()
-        while IFS= read -r d; do
-            name=$(basename "$d")
-            [[ ! -f "${d}/${name}.gff" ]] && MISSING_GFF+=("$name")
-        done < <(find "$ANNO_DIR" -maxdepth 1 -mindepth 1 -type d | sort)
-
-        if [[ ${#MISSING_GFF[@]} -gt 0 ]]; then
-            echo "" | tee -a "$LOG"
-            echo "--- Step 0: Prokka repair for ${#MISSING_GFF[@]} strains missing GFF ---" | tee -a "$LOG"
-
-            if [[ "$TEST_MODE" == true ]]; then
-                # In test mode limit to a few repairs so it doesn't take too long
-                MISSING_GFF=("${MISSING_GFF[@]:0:3}")
-            fi
-
-            printf '%s\n' "${MISSING_GFF[@]}" | \
-                parallel -j "$PARALLEL_JOBS" --line-buffer \
-                    run_prokka_repair {} "$ANNO_DIR" "$GENOME_DIR" \
-                    "$HMM_FILE" "$PROKKA_CPUS" "$LOG" || true
-
-            n_repaired=$(for n in "${MISSING_GFF[@]}"; do
-                [[ -f "${ANNO_DIR}/${n}/${n}.gff" ]] && echo ok; done | wc -l)
-            echo "Step 0 complete: repaired=${n_repaired} of ${#MISSING_GFF[@]}" | tee -a "$LOG"
-        else
-            echo "" | tee -a "$LOG"
-            echo "--- Step 0: No missing GFF files — skipping Prokka repair ---" | tee -a "$LOG"
-        fi
-
+    if [[ "$TEST_MODE" == true ]]; then
+        find "$GENOME_DIR" -maxdepth 1 -name "*.fasta" \
+            -exec basename {} .fasta \; | head -"$TEST_N"
     else
-        echo "" | tee -a "$LOG"
-        echo "--- Step 0: genome_dir not set or not found — skipping Prokka repair ---" | tee -a "$LOG"
-    fi
+        find "$GENOME_DIR" -maxdepth 1 -name "*.fasta" \
+            -exec basename {} .fasta \;
+    fi | parallel -j "$PARALLEL_JOBS" --line-buffer \
+        run_prokka_for_strain {} "$ANNO_DIR" "$GENOME_DIR" \
+        "$HMM_FILE" "$PROKKA_CPUS" "$LOG" || true
+
+    n_annotated=$(find "$ANNO_DIR" -maxdepth 1 -mindepth 1 -type d \
+        -exec sh -c '[ -f "$1/$( basename $1 ).gff" ] && echo ok' _ {} \; | wc -l)
+    echo "Step 0 complete: $n_annotated strains with GFF in $ANNO_DIR" | tee -a "$LOG"
 
     # ----------------------------------------------------------
     # Step 1: Extract neighborhood FAA (parallel)
@@ -405,22 +405,25 @@ while IFS=$'\t' read -r GENOME_NAME PROKKA_SPECIES TARGET_FASTA GENOME_DIR; do
     echo "--- Step 1: Extract neighborhood FAA (parallel -j ${PARALLEL_JOBS}) ---" | tee -a "$LOG"
 
     if [[ "$TEST_MODE" == true ]]; then
-        find "$ANNO_DIR" -maxdepth 1 -mindepth 1 -type d -exec basename {} \; | head -"$TEST_N"
+        find "$ANNO_DIR" -maxdepth 1 -mindepth 1 -type d \
+            -exec basename {} \; | head -"$TEST_N"
     else
-        find "$ANNO_DIR" -maxdepth 1 -mindepth 1 -type d -exec basename {} \;
+        find "$ANNO_DIR" -maxdepth 1 -mindepth 1 -type d \
+            -exec basename {} \;
     fi | parallel -j "$PARALLEL_JOBS" --line-buffer \
         run_extract_neighborhood {} "$ANNO_DIR" "$SUBSET_DIR" \
         "$TARGET_FASTA" "$TARGET_GENE" "$EXTRACT_SCRIPT" "$MAX_GENES" "$LOG" || true
 
     n_subset=$(find "$SUBSET_DIR" -name "*_neighborhood.faa" | wc -l)
-    echo "Complete: $n_subset neighborhood FAA files written" | tee -a "$LOG"
+    echo "Step 1 complete: $n_subset neighborhood FAA files written" | tee -a "$LOG"
 
     echo "" | tee -a "$LOG"
     echo "============================================" | tee -a "$LOG"
     echo "Genome set $GENOME_NAME complete: $(date)" | tee -a "$LOG"
     echo "Key outputs:" | tee -a "$LOG"
-    echo "  Neighborhood FAA: $SUBSET_DIR/" | tee -a "$LOG"
-    echo "  Log:              $LOG" | tee -a "$LOG"
+    echo "  Prokka annotations: $ANNO_DIR/" | tee -a "$LOG"
+    echo "  Neighborhood FAA:   $SUBSET_DIR/" | tee -a "$LOG"
+    echo "  Log:                $LOG" | tee -a "$LOG"
     echo "Next: run run_annotate_eggnog.sh to pool proteins and run EggNOG-mapper." | tee -a "$LOG"
     echo "============================================" | tee -a "$LOG"
 
