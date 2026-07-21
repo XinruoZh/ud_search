@@ -41,13 +41,20 @@ PROKKA_BASE_DIR="/mnt/extra_space/xinruoz/ud_search/annotation_prokka"
 # Mapping: genome set name -> species subfolder in PROKKA_BASE_DIR
 declare -A SPECIES_FOLDER=([S_mitis]=mitis [S_pneumo]=pneumo [S_oralis]=oralis)
 
+# Genome FASTA directories (used to re-run Prokka on strains with missing GFF)
+SM_GENOME_DIR="/mnt/extra_space/database/SMitis_Database_pubMLST_102225"
+SP_GENOME_DIR="/mnt/extra_space/database/GoldenSet_7548Genomes_2023"
+SO_GENOME_DIR="/mnt/extra_space/database/OralisSetX"
+
 OUTPUT_DIR="${BASE_DIR}/annotation_results"
 
 # ============================================================
 # Stable settings
 # ============================================================
+HMM_FILE="/mnt/extra_space/database/hmm/eggNOG_strep_combined.hmm"
 EGGNOG_DB="/mnt/extra_space/database/eggnog_data/emapperdb-5.0.2"
 CONDA_ENV="ud_search"
+PROKKA_CPUS=4
 PARALLEL_JOBS=5
 EGGNOG_CPUS=20
 MAX_GENES=20
@@ -83,17 +90,22 @@ target_gene: ${query}
 output_dir: ${OUTPUT_DIR}
 max_genes: ${MAX_GENES}
 prokka_base_dir: ${PROKKA_BASE_DIR}
+hmm_file: ${HMM_FILE}
+prokka_cpus: ${PROKKA_CPUS}
 conda_env: ${CONDA_ENV}
 parallel_jobs: ${PARALLEL_JOBS}
 genome_sets:
   - genome_name: S_mitis
     prokka_species_name: ${SPECIES_FOLDER[S_mitis]}
+    genome_dir: ${SM_GENOME_DIR}
     target_fasta: ${ALLELE_SEARCH_RESULTS}/${query}/sm_${query}/standard_dna_seq/${query}.fasta
   - genome_name: S_pneumo
     prokka_species_name: ${SPECIES_FOLDER[S_pneumo]}
+    genome_dir: ${SP_GENOME_DIR}
     target_fasta: ${ALLELE_SEARCH_RESULTS}/${query}/sp_${query}/standard_dna_seq/${query}.fasta
   - genome_name: S_oralis
     prokka_species_name: ${SPECIES_FOLDER[S_oralis]}
+    genome_dir: ${SO_GENOME_DIR}
     target_fasta: ${ALLELE_SEARCH_RESULTS}/${query}/so_${query}/standard_dna_seq/${query}.fasta
 YAML
 

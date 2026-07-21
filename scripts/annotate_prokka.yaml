@@ -21,27 +21,38 @@ prokka_base_dir: /mnt/extra_space/xinruoz/ud_search/annotation_prokka
 # List of genome sets to process.
 # genome_name         : human-readable label; becomes part of the output subdir name
 # prokka_species_name : subfolder name inside prokka_base_dir for this species
+# genome_dir          : directory of genome FASTA files (one *.fasta per strain);
+#                       used to re-run Prokka for strains with missing GFF
 # target_fasta        : FASTA with hit coordinates for this gene in this genome set
 #                       Header format: >{target_gene}_vs_{sample}|contig=X|...|SubjectStart=N|SubjectEnd=M|...
 genome_sets:
   - genome_name: S_oralis
     prokka_species_name: oralis
+    genome_dir: /mnt/extra_space/database/OralisSetX
     target_fasta: /home/xinruoz/Document/Hiller/allele_search/results/so_rgg144/standard_dna_seq/Rgg144.fasta
 
   - genome_name: S_mitis
     prokka_species_name: mitis
+    genome_dir: /mnt/extra_space/database/SMitis_Database_pubMLST_102225
     target_fasta: /home/xinruoz/Document/Hiller/allele_search/results/mitis_Rgg144/standard_dna_seq/Rgg144.fasta
 
   - genome_name: S_pneumo
     prokka_species_name: pneumo
+    genome_dir: /mnt/extra_space/database/GoldenSet_7548Genomes_2023
     target_fasta: /home/xinruoz/Document/Hiller/allele_search/Rgg144_sp/standard_dna_seq/Rgg144.fasta
 
 # ============================================================
 # STABLE SETTINGS — change only when tools or environment change
 # ============================================================
 
-# Conda environment containing parallel
+# HMM file passed to Prokka --hmms when re-annotating failed strains (must be hmmpress-indexed)
+hmm_file: /mnt/extra_space/database/hmm/eggNOG_strep_combined.hmm
+
+# Conda environment containing prokka, parallel
 conda_env: ud_search
 
-# Number of parallel jobs for neighborhood FAA extraction
+# Prokka CPUs per job (used only when re-annotating strains with missing GFF)
+prokka_cpus: 4
+
+# Number of parallel jobs for neighborhood FAA extraction (and Prokka repair)
 parallel_jobs: 5
