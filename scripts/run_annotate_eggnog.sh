@@ -114,14 +114,13 @@ while IFS=$'\t' read -r GENOME_NAME PROKKA_DIR; do
     EGGNOG_DIR="${SET_DIR}/eggnog"
     LOG_DIR="${SET_DIR}/log"
 
-    if [[ ! -d "$SUBSET_DIR" ]]; then
-        echo "[ERROR] Neighborhood FAA dir not found: $SUBSET_DIR" >&2
-        echo "        Run run_annotate_prokka.sh first." >&2
-        continue
-    fi
-
     mkdir -p "$EGGNOG_DIR" "$LOG_DIR"
     LOG="${LOG_DIR}/${timestamp}_annotate_eggnog.log"
+
+    if [[ ! -d "$SUBSET_DIR" ]]; then
+        echo "[ERROR] Neighborhood FAA dir not found: $SUBSET_DIR — run run_annotate_prokka.sh first" | tee -a "$LOG" >&2
+        continue
+    fi
 
     echo "" | tee -a "$LOG"
     echo "============================================" | tee -a "$LOG"
@@ -137,6 +136,12 @@ while IFS=$'\t' read -r GENOME_NAME PROKKA_DIR; do
 
     UNIQUE_FAA="${EGGNOG_DIR}/unique_proteins.faa"
     ORIGINS_TSV="${EGGNOG_DIR}/protein_origins.tsv"
+
+    n_faa=$(find "$SUBSET_DIR" -name "*_neighborhood.faa" -size +0 | wc -l)
+    if [[ $n_faa -eq 0 ]]; then
+        echo "[SKIP] No non-empty neighborhood FAA files in $SUBSET_DIR — skipping EggNOG for $GENOME_NAME" | tee -a "$LOG"
+        continue
+    fi
 
     if [[ -f "$UNIQUE_FAA" && -f "$ORIGINS_TSV" ]]; then
         echo "[SKIP] unique_proteins.faa and protein_origins.tsv already exist" | tee -a "$LOG"

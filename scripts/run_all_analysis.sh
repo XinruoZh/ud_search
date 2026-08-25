@@ -5,8 +5,8 @@
 # query × genome-set combination produced by
 # run_all_sequence_annotation.sh.
 #
-# Queries:     rgg144, rgg939, rgg1518, TprA
-# Genome sets: S_mitis, S_pneumo, S_oralis
+# Queries:     rgg144, rgg939, rgg1518, TprA, TprB, TprC
+# Genome sets: S_mitis, S_pneumo, S_oralis, S_therm, Portugal
 #
 # For each combination it generates a per-combo analysis config
 # in scripts/configs/ and calls run_analysis.sh.
@@ -30,32 +30,51 @@ CONFIG_DIR="${SCRIPT_DIR}/configs"
 # Paths — must match run_all_sequence_annotation.sh
 # ============================================================
 ALLELE_SEARCH_RESULTS="/mnt/extra_space/xinruoz/allele_search/results"
+DOWNSTREAM_ALLELE_RESULTS="/mnt/extra_space/xinruoz/downstream_analysis_paper/allele_results"
 PROKKA_BASE_DIR="/mnt/extra_space/xinruoz/ud_search/annotation_prokka"
-OUTPUT_DIR="${BASE_DIR}/annotation_results"
+OUTPUT_DIR="/mnt/extra_space/xinruoz/ud_search/annotation_results"
 
 # Species subfolder inside PROKKA_BASE_DIR
-declare -A SPECIES_FOLDER=([S_mitis]=mitis [S_pneumo]=pneumo [S_oralis]=oralis)
+declare -A SPECIES_FOLDER=([S_mitis]=mitis [S_pneumo]=pneumo [S_oralis]=oralis [S_therm]=therm [Portugal]=port)
 
 # Allele-search result prefix per genome set
-declare -A ALLELE_PREFIX=([S_mitis]=sm [S_pneumo]=sp [S_oralis]=so)
+declare -A ALLELE_PREFIX=([S_mitis]=sm [S_pneumo]=sp [S_oralis]=so [S_therm]=sth [Portugal]=port)
+
+# Per-genome-set allele results base directory (S_therm and Portugal live in a different root)
+declare -A ALLELE_BASE=([S_mitis]="${ALLELE_SEARCH_RESULTS}" [S_pneumo]="${ALLELE_SEARCH_RESULTS}" [S_oralis]="${ALLELE_SEARCH_RESULTS}" [S_therm]="${DOWNSTREAM_ALLELE_RESULTS}" [Portugal]="${DOWNSTREAM_ALLELE_RESULTS}")
 
 # ============================================================
 # Analysis parameters (shared across all combos)
 # ============================================================
 CONDA_ENV="ud_search"
 WINDOW=20000
-DIRECTION=downstream
 MAX_RANK=10
 CDHIT_IDENTITY=0.80
 CDHIT_THREADS=4
-CLUSTER_PREFIX=Drgg
 CHAIN_MAX_RANK=10
+_ncpu=$(nproc 2>/dev/null || echo 4)
+INTERPROSCAN_CPUS=$(( _ncpu < 8 ? _ncpu : 8 ))
 
 # ============================================================
 # Defaults
 # ============================================================
-ALL_QUERIES=(rgg144 rgg939 rgg1518 TprA)
-ALL_SETS=(S_mitis S_pneumo S_oralis)
+# Per-query search direction:
+#   downstream = regulated genes are 3' of the query (rgg144, TprA)
+#   upstream   = divergent regulation — genes on the opposite/upstream side (rgg939, rgg1518)
+#   both       = unknown direction, search both sides (TprB, TprC)
+declare -A QUERY_DIRECTION=(
+    [rgg144]=downstream
+    [rgg939]=upstream
+    [rgg1518]=upstream
+    [TprA]=downstream
+    [TprB]=both
+    [TprC]=both
+    [TprA2]=downstream
+    [RtgR]=upstream
+)
+
+ALL_QUERIES=(rgg144 rgg939 rgg1518 TprA TprB TprC TprA2 RtgR)
+ALL_SETS=(S_mitis S_pneumo S_oralis S_therm Portugal)
 DRY_RUN=false
 
 # ============================================================
@@ -108,10 +127,21 @@ for query in "${SELECTED_QUERIES[@]}"; do
             continue
         fi
 
+        EGGNOG_FILE="${SET_DIR}/eggnog/${gset}_${query}.emapper.annotations"
+        if [[ ! -f "$EGGNOG_FILE" ]]; then
+            echo "[SKIP] $gset/$query: EggNOG annotations not found ($EGGNOG_FILE) — run annotation first"
+            n_skip=$(( n_skip + 1 ))
+            continue
+        fi
+
+        DIRECTION="${QUERY_DIRECTION[$query]}"
         prefix="${ALLELE_PREFIX[$gset]}"
+        _gene_short=$(echo "$query" | sed 's/^[Rr][Gg][Gg]//')
+        [[ "$_gene_short" == "$query" ]] && _gene_short=$(echo "$query" | tr '[:upper:]' '[:lower:]')
+        CLUSTER_PREFIX="D${_gene_short}_${prefix}"
         species="${SPECIES_FOLDER[$gset]}"
         ANNO_DIR="${PROKKA_BASE_DIR}/${species}"
-        QUERY_FASTA="${ALLELE_SEARCH_RESULTS}/${query}/${prefix}_${query}/standard_dna_seq/${query}.fasta"
+        QUERY_FASTA="${ALLELE_BASE[$gset]}/${query}/${prefix}_${query}/standard_dna_seq/${query}.fasta"
 
         ANALYSIS_CONFIG="${CONFIG_DIR}/${gset}_${query}_analysis.yaml"
 
@@ -141,6 +171,8 @@ cdhit_threads:  ${CDHIT_THREADS}
 cluster_prefix: ${CLUSTER_PREFIX}
 
 chain_max_rank: ${CHAIN_MAX_RANK}
+
+interproscan_cpus: ${INTERPROSCAN_CPUS}
 
 conda_env: ${CONDA_ENV}
 YAML

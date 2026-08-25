@@ -101,7 +101,13 @@ PROKKA_BASE_DIR=$(parse_yaml_scalar prokka_base_dir)
 HMM_FILE=$(parse_yaml_scalar hmm_file)
 CONDA_ENV=$(parse_yaml_scalar conda_env)
 PROKKA_CPUS=$(parse_yaml_scalar prokka_cpus)
-PARALLEL_JOBS=$(parse_yaml_scalar parallel_jobs)
+_ncpu=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+if [[ $_ncpu -le 8 ]]; then
+    PARALLEL_JOBS=$(( _ncpu - 2 ))
+else
+    PARALLEL_JOBS=$(( _ncpu - 4 ))
+fi
+[[ $PARALLEL_JOBS -lt 1 ]] && PARALLEL_JOBS=1
 
 EXTRACT_SCRIPT="${BASE_DIR}/code/extract_neighborhood_faa.py"
 
@@ -133,6 +139,7 @@ lines_out = []
 
 with open(fasta_in) as f:
     for line in f:
+        line = line.rstrip("\r\n") + "\n"  # normalize Windows line endings
         if line.startswith(">"):
             original = line[1:].split()[0]
             rest = line[1 + len(original):]
@@ -146,14 +153,14 @@ with open(fasta_in) as f:
         else:
             lines_out.append(line)
 
-if not mapping:
-    sys.exit(2)  # no long names — nothing to shorten
-
+# Always write the cleaned file (normalizes line endings even when no names shortened)
 with open(fasta_out, "w") as f:
     f.writelines(lines_out)
 with open(map_out, "w") as f:
     for short, orig in mapping.items():
         f.write(f"{short}\t{orig}\n")
+
+sys.exit(0 if mapping else 2)  # 0=names shortened (need GFF restore), 2=no shortening
 '
 
 # Reads Prokka GFF with shortened contig names, restores original names
@@ -214,11 +221,16 @@ run_prokka_for_strain() {
 
     # Already annotated — skip
     if [[ -f "$gff" ]]; then
-        echo "[SKIP] Prokka: $name" | tee -a "$log"
         return 0
     fi
 
     local genome_fasta="${genome_dir}/${name}.fasta"
+    if [[ ! -f "$genome_fasta" ]]; then
+        genome_fasta="${genome_dir}/${name}.fna"
+    fi
+    if [[ ! -f "$genome_fasta" ]]; then
+        genome_fasta="${genome_dir}/${name}.fa"
+    fi
     if [[ ! -f "$genome_fasta" ]]; then
         echo "[WARN] Prokka: $name — genome FASTA not found in $genome_dir, skipping" | tee -a "$log"
         return 0
@@ -234,19 +246,22 @@ run_prokka_for_strain() {
     rm -rf "$tmpdir"
     mkdir -p "$prokka_out"
 
-    # Try to shorten contig names (exit 2 = none are long)
+    # Clean line endings + shorten any contig names >37 chars
+    # Always writes tmp_fasta (normalized line endings); exit 0=names shortened, 2=no shortening
     python3 -c "$SHORTEN_PY" "$genome_fasta" "$tmp_fasta" "$map_file"
     local need_restore=$?
+    local input_fasta="$tmp_fasta"   # always use cleaned temp file
 
-    local input_fasta
-    if [[ $need_restore -eq 2 ]]; then
-        input_fasta="$genome_fasta"   # all names fine — use original
-    else
-        input_fasta="$tmp_fasta"      # shortened names — use temp
-    fi
+    # Provide a no-op rrnpp_detector wrapper: rrnpp_detector v1.1.0 crashes on
+    # some Prodigal GFF formats, causing Prokka to fail. Since rrnpp annotations
+    # are not used in this pipeline (we use our own HMMs), we bypass it silently.
+    local fake_bin="${tmpdir}/fake_bin"
+    mkdir -p "$fake_bin"
+    printf '#!/bin/bash\nexit 0\n' > "${fake_bin}/rrnpp_detector"
+    chmod +x "${fake_bin}/rrnpp_detector"
 
-    # Run Prokka
-    prokka \
+    # Run Prokka (fake_bin first in PATH so our no-op rrnpp_detector is found first)
+    PATH="${fake_bin}:${PATH}" prokka \
         --cpus   "$prokka_cpus" \
         --outdir "$prokka_out" \
         --prefix "$name" \
@@ -303,7 +318,6 @@ run_extract_neighborhood() {
     local subset_faa="$out_dir/${name}_neighborhood.faa"
 
     if [[ -f "$subset_faa" ]]; then
-        echo "[SKIP] Extract: $name" | tee -a "$log"
         return 0
     fi
 
@@ -363,7 +377,7 @@ while IFS=$'\t' read -r GENOME_NAME PROKKA_SPECIES TARGET_FASTA GENOME_DIR; do
     mkdir -p "$SUBSET_DIR" "$LOG_DIR"
     LOG="${LOG_DIR}/${timestamp}_annotate_prokka.log"
 
-    n_genomes=$(find "$GENOME_DIR" -maxdepth 1 -name "*.fasta" | wc -l)
+    n_genomes=$(find "$GENOME_DIR" -maxdepth 1 \( -name "*.fasta" -o -name "*.fna" -o -name "*.fa" \) | wc -l)
 
     echo "" | tee -a "$LOG"
     echo "============================================" | tee -a "$LOG"
@@ -385,11 +399,11 @@ while IFS=$'\t' read -r GENOME_NAME PROKKA_SPECIES TARGET_FASTA GENOME_DIR; do
     echo "--- Step 0: Prokka annotation (parallel -j ${PARALLEL_JOBS}) ---" | tee -a "$LOG"
 
     if [[ "$TEST_MODE" == true ]]; then
-        find "$GENOME_DIR" -maxdepth 1 -name "*.fasta" \
-            -exec basename {} .fasta \; | head -"$TEST_N"
+        find "$GENOME_DIR" -maxdepth 1 \( -name "*.fasta" -o -name "*.fna" -o -name "*.fa" \) \
+            -exec bash -c 'basename "${1%.*}"' _ {} \; | head -"$TEST_N"
     else
-        find "$GENOME_DIR" -maxdepth 1 -name "*.fasta" \
-            -exec basename {} .fasta \;
+        find "$GENOME_DIR" -maxdepth 1 \( -name "*.fasta" -o -name "*.fna" -o -name "*.fa" \) \
+            -exec bash -c 'basename "${1%.*}"' _ {} \;
     fi | parallel -j "$PARALLEL_JOBS" --line-buffer \
         run_prokka_for_strain {} "$ANNO_DIR" "$GENOME_DIR" \
         "$HMM_FILE" "$PROKKA_CPUS" "$LOG" || true
@@ -404,18 +418,24 @@ while IFS=$'\t' read -r GENOME_NAME PROKKA_SPECIES TARGET_FASTA GENOME_DIR; do
     echo "" | tee -a "$LOG"
     echo "--- Step 1: Extract neighborhood FAA (parallel -j ${PARALLEL_JOBS}) ---" | tee -a "$LOG"
 
-    if [[ "$TEST_MODE" == true ]]; then
-        find "$ANNO_DIR" -maxdepth 1 -mindepth 1 -type d \
-            -exec basename {} \; | head -"$TEST_N"
+    n_query_seqs=$(grep -c '^>' "$TARGET_FASTA" 2>/dev/null || true)
+    if [[ $n_query_seqs -eq 0 ]]; then
+        echo "[SKIP] Step 1 ($GENOME_NAME): target FASTA has 0 sequences ($TARGET_FASTA) — '$TARGET_GENE' likely absent from this genome set" | tee -a "$LOG"
+        echo "Step 1 complete: 0 neighborhood FAA files written" | tee -a "$LOG"
     else
-        find "$ANNO_DIR" -maxdepth 1 -mindepth 1 -type d \
-            -exec basename {} \;
-    fi | parallel -j "$PARALLEL_JOBS" --line-buffer \
-        run_extract_neighborhood {} "$ANNO_DIR" "$SUBSET_DIR" \
-        "$TARGET_FASTA" "$TARGET_GENE" "$EXTRACT_SCRIPT" "$MAX_GENES" "$LOG" || true
+        if [[ "$TEST_MODE" == true ]]; then
+            find "$ANNO_DIR" -maxdepth 1 -mindepth 1 -type d \
+                -exec basename {} \; | head -"$TEST_N"
+        else
+            find "$ANNO_DIR" -maxdepth 1 -mindepth 1 -type d \
+                -exec basename {} \;
+        fi | parallel -j "$PARALLEL_JOBS" --line-buffer \
+            run_extract_neighborhood {} "$ANNO_DIR" "$SUBSET_DIR" \
+            "$TARGET_FASTA" "$TARGET_GENE" "$EXTRACT_SCRIPT" "$MAX_GENES" "$LOG" || true
 
-    n_subset=$(find "$SUBSET_DIR" -name "*_neighborhood.faa" | wc -l)
-    echo "Step 1 complete: $n_subset neighborhood FAA files written" | tee -a "$LOG"
+        n_subset=$(find "$SUBSET_DIR" -name "*_neighborhood.faa" | wc -l)
+        echo "Step 1 complete: $n_subset neighborhood FAA files written" | tee -a "$LOG"
+    fi
 
     echo "" | tee -a "$LOG"
     echo "============================================" | tee -a "$LOG"

@@ -3,8 +3,8 @@
 # run_all_sequence_annotation.sh
 # Runs Prokka + EggNOG annotation for all queries from allele_search.sh
 #
-# Queries:     rgg144, rgg939, rgg1518, TprA
-# Genome sets: S_mitis (sm), S_pneumo (sp), S_oralis (so)
+# Queries:     rgg144, rgg939, rgg1518, TprA, TprB, TprC
+# Genome sets: S_mitis (sm), S_pneumo (sp), S_oralis (so), S_therm (sth), Portugal (port)
 #
 # For each query:
 #   Step A: Prokka annotate all genomes + extract neighborhood FAA
@@ -33,20 +33,26 @@ mkdir -p "$CONFIG_DIR"
 # Paths — derived from allele_search.sh
 # ============================================================
 ALLELE_SEARCH_RESULTS="/mnt/extra_space/xinruoz/allele_search/results"
+DOWNSTREAM_ALLELE_RESULTS="/mnt/extra_space/xinruoz/downstream_analysis_paper/allele_results"
+
+# Per-genome-set allele results base directory (S_therm and Portugal live in a different root)
+declare -A ALLELE_BASE=([S_mitis]="${ALLELE_SEARCH_RESULTS}" [S_pneumo]="${ALLELE_SEARCH_RESULTS}" [S_oralis]="${ALLELE_SEARCH_RESULTS}" [S_therm]="${DOWNSTREAM_ALLELE_RESULTS}" [Portugal]="${DOWNSTREAM_ALLELE_RESULTS}")
 
 # Central Prokka annotation directory — created on first run, shared across all queries.
 # Structure: {PROKKA_BASE_DIR}/{species_folder}/{strain}/{strain}.gff/.faa
-PROKKA_BASE_DIR="${BASE_DIR}/annotation_prokka"
+PROKKA_BASE_DIR="/mnt/extra_space/xinruoz/ud_search/annotation_prokka"
 
 # Mapping: genome set name -> species subfolder in PROKKA_BASE_DIR
-declare -A SPECIES_FOLDER=([S_mitis]=mitis [S_pneumo]=pneumo [S_oralis]=oralis)
+declare -A SPECIES_FOLDER=([S_mitis]=mitis [S_pneumo]=pneumo [S_oralis]=oralis [S_therm]=therm [Portugal]=port)
 
 # Genome FASTA directories (used to re-run Prokka on strains with missing GFF)
 SM_GENOME_DIR="/mnt/extra_space/database/SMitis_Database_pubMLST_102225"
 SP_GENOME_DIR="/mnt/extra_space/database/GoldenSet_7548Genomes_2023"
 SO_GENOME_DIR="/mnt/extra_space/database/OralisSetX"
+STH_GENOME_DIR="/mnt/extra_space/database/ThermSetX"
+PORT_GENOME_DIR="/mnt/extra_space/database/PortugalStrains"
 
-OUTPUT_DIR="${BASE_DIR}/annotation_results"
+OUTPUT_DIR="/mnt/extra_space/xinruoz/ud_search/annotation_results"
 
 # ============================================================
 # Stable settings
@@ -55,14 +61,20 @@ HMM_FILE="/mnt/extra_space/database/hmm/eggNOG_strep_combined.hmm"
 EGGNOG_DB="/mnt/extra_space/database/eggnog_data/emapperdb-5.0.2"
 CONDA_ENV="ud_search"
 PROKKA_CPUS=4
-PARALLEL_JOBS=5
+_ncpu=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+if [[ $_ncpu -le 8 ]]; then
+    PARALLEL_JOBS=$(( _ncpu - 2 ))
+else
+    PARALLEL_JOBS=$(( _ncpu - 4 ))
+fi
+[[ $PARALLEL_JOBS -lt 1 ]] && PARALLEL_JOBS=1
 EGGNOG_CPUS=20
 MAX_GENES=20
 
 # ============================================================
 # Queries (order matches allele_search.sh)
 # ============================================================
-QUERIES=(rgg144 rgg939 rgg1518 TprA)
+QUERIES=(rgg144 rgg939 rgg1518 TprA TprB TprC TprA2 RtgR)
 
 echo "============================================"
 echo "run_all_sequence_annotation.sh"
@@ -107,6 +119,14 @@ genome_sets:
     prokka_species_name: ${SPECIES_FOLDER[S_oralis]}
     genome_dir: ${SO_GENOME_DIR}
     target_fasta: ${ALLELE_SEARCH_RESULTS}/${query}/so_${query}/standard_dna_seq/${query}.fasta
+  - genome_name: S_therm
+    prokka_species_name: ${SPECIES_FOLDER[S_therm]}
+    genome_dir: ${STH_GENOME_DIR}
+    target_fasta: ${ALLELE_BASE[S_therm]}/${query}/sth_${query}/standard_dna_seq/${query}.fasta
+  - genome_name: Portugal
+    prokka_species_name: ${SPECIES_FOLDER[Portugal]}
+    genome_dir: ${PORT_GENOME_DIR}
+    target_fasta: ${ALLELE_BASE[Portugal]}/${query}/port_${query}/standard_dna_seq/${query}.fasta
 YAML
 
     # ----------------------------------------------------------
@@ -122,6 +142,10 @@ genome_sets:
     prokka_dir: ${PROKKA_BASE_DIR}/${SPECIES_FOLDER[S_pneumo]}
   - genome_name: S_oralis
     prokka_dir: ${PROKKA_BASE_DIR}/${SPECIES_FOLDER[S_oralis]}
+  - genome_name: S_therm
+    prokka_dir: ${PROKKA_BASE_DIR}/${SPECIES_FOLDER[S_therm]}
+  - genome_name: Portugal
+    prokka_dir: ${PROKKA_BASE_DIR}/${SPECIES_FOLDER[Portugal]}
 eggnog_db: ${EGGNOG_DB}
 conda_env: ${CONDA_ENV}
 eggnog_cpus: ${EGGNOG_CPUS}

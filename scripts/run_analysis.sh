@@ -74,6 +74,8 @@ BLAST_NAMES=$(parse_yaml balst_protein_name 2>/dev/null || true)
 END_AT_GENE=$(parse_yaml end_at_gene 2>/dev/null || true)
 STOP_BEFORE_GENE=$(parse_yaml stop_before_gene 2>/dev/null || true)
 MASTER_COLOR_MAP=$(parse_yaml master_color_map 2>/dev/null || true)
+INTERPROSCAN_CPUS=$(parse_yaml interproscan_cpus 2>/dev/null || true)
+[[ -z "$INTERPROSCAN_CPUS" ]] && INTERPROSCAN_CPUS=4
 
 CODE_DIR="$(cd "${SCRIPT_DIR}/../code" && pwd)"
 
@@ -187,9 +189,35 @@ fi
 log "Stage 5 complete: $CLUSTER_TSV"
 
 # ============================================================
-# Stage 6+7: InterProScan + update (skip if no results)
+# Stage 6: InterProScan on clustered proteins
 # ============================================================
+log ""
+log "--- Stage 6: interproscan ---"
 INTERPRO_TSV="${OUTPUT_DIR}/interpro_results/clustered_proteins.fasta.tsv"
+
+if [[ -f "$INTERPRO_TSV" ]]; then
+    log "[SKIP] InterProScan TSV already exists: $INTERPRO_TSV"
+elif [[ ! -s "$CLUSTER_FASTA" ]]; then
+    log "[SKIP] Stage 6: $CLUSTER_FASTA not found or empty"
+else
+    mkdir -p "${OUTPUT_DIR}/interpro_results"
+    log "[START] interproscan -i $CLUSTER_FASTA --cpu $INTERPROSCAN_CPUS"
+    interproscan.sh \
+        -i   "$CLUSTER_FASTA" \
+        -f   TSV \
+        -o   "$INTERPRO_TSV" \
+        --cpu "$INTERPROSCAN_CPUS" \
+        --goterms \
+        --iprlookup \
+        -dp \
+        >> "$LOG" 2>&1 \
+        && log "[DONE]  Stage 6: $INTERPRO_TSV" \
+        || log "[WARN]  Stage 6: interproscan failed — stage 7 will be skipped"
+fi
+
+# ============================================================
+# Stage 7: update_tsv_with_interpro
+# ============================================================
 UPDATED_CLUSTER_TSV="${OUTPUT_DIR}/cluster/clustered_proteins_updated.tsv"
 
 if [[ -f "$INTERPRO_TSV" ]]; then
@@ -208,11 +236,7 @@ if [[ -f "$INTERPRO_TSV" ]]; then
     CLUSTER_TSV_FOR_MAP="$UPDATED_CLUSTER_TSV"
 else
     log ""
-    log "[INFO] No InterProScan results found at $INTERPRO_TSV — skipping stages 6+7"
-    log "[INFO] To run InterProScan manually:"
-    log "[INFO]   Run InterProScan on: $CLUSTER_FASTA"
-    log "[INFO]   Place output TSV at: $INTERPRO_TSV"
-    log "[INFO]   Then re-run this script to pick up the results"
+    log "[INFO] No InterProScan results (stage 6 failed or was skipped) — skipping stage 7"
     CLUSTER_TSV_FOR_MAP="$CLUSTER_TSV"
 fi
 

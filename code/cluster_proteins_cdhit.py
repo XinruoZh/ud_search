@@ -49,7 +49,7 @@ def parse_args():
     )
     parser.add_argument(
         "--prefix", "-p",
-        default="Drgg",
+        default="D",
         help="Prefix for output protein IDs"
     )
     parser.add_argument(

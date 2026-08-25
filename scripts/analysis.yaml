@@ -35,7 +35,7 @@ direction: downstream
 max_rank:       10
 cdhit_identity: 0.80
 cdhit_threads:  4
-cluster_prefix: Drgg
+cluster_prefix: D
 
 # --- Gene chain analysis ---
 chain_max_rank: 10
